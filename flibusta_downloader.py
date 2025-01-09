@@ -24,11 +24,13 @@ logging.basicConfig(
 class WebPageParser:
     def __init__(self, url):
         self.url = url
+        self.host = re.match(r'(https?://[^/]+)', url).group(1)
         self.page_content = None
         self.soap = None
         self.selected = None
         self.story_name = None
         self.new_part = False
+        self.tags = []
         
     def fetch_page(self):
         try:
@@ -48,7 +50,29 @@ class WebPageParser:
             return None
         self.soup = BeautifulSoup(self.page_content, 'html.parser')
         logging.debug(self.soup)
-        
+    
+    def get_annotation(self,url, index, tags):
+        try:
+            response = requests.get(self.host + url)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            main_div = soup.find('div', id='main')
+            if main_div:
+                annotation_tag = main_div.find('h2', text='Аннотация')
+                if annotation_tag:
+                    p_tag = annotation_tag.find_next('p')
+                    if p_tag:
+                        annotation = p_tag.get_text().strip()
+                # get text from all a tags with class "genre" within main_div
+                for a in main_div.find_all('a', class_='genre'):
+                    if a.get_text() not in tags:
+                        tags.append(a.get_text())
+            
+            logging.info(f"Found annotation for part {index} : {annotation}")
+            return annotation
+        except requests.RequestException as e:
+            logging.error(f"Error fetching the annotation: {e}")
+            
     def get_story_links(self):
         if self.soup is None:
             logging.warning("No content has been parsed.")
@@ -62,11 +86,14 @@ class WebPageParser:
         self.story_name = main_div.find('h1').get_text().strip()
         logging.info(f"Found story name {self.story_name}")
         links = []
+        tags = []
         for a in main_div.find_all('a', href=True):
             if re.fullmatch(r'/b/\d+', a['href']):
                 text_before_a = a.previous_sibling.strip() if a.previous_sibling else ''
-                links.append({'url': a['href'], 'text': a.get_text(), 'index': text_before_a})
                 logging.debug(f"Found part: {text_before_a} name: {a.get_text()}, url: {a['href']}")
+                annotation = self.get_annotation(a['href'], text_before_a, tags)
+                links.append({'url': a['href'], 'text': a.get_text(), 'index': text_before_a, 'annotation': annotation})
+        self.tags = tags
         return links
 
     def show_links_in_listbox(self, links):
@@ -127,14 +154,20 @@ class WebPageParser:
             os.makedirs(folder_name)
         logging.info(f"Created folder: {folder_name}")
         files = []
+        annotation = "";
         for link in self.selected:
             logging.info(f"Processing link: {link['url']} - {link['text']}")
             files.append(self.fetch_part(link['url'], folder_name))
-        self.use_epubmerge(folder_name, files)
+            annotation += f"{link['index']} - {link['text']}\n\n"
+            part_annotation = link.get('annotation', '')
+            if part_annotation not in annotation:
+                annotation += part_annotation + '\n\n'
+            
+        self.use_epubmerge(folder_name, files, annotation)
         
     def fetch_part(self, base_url, folder):
         try:
-            part_url = re.match(r'(https?://[^/]+)', self.url).group(1) + base_url + '/epub'
+            part_url = self.host + base_url + '/epub'
             file_name = base_url.split('/')[-1] + '.epub'
             file_path = os.path.join(folder, file_name)
             
@@ -158,9 +191,27 @@ class WebPageParser:
        
     # Test the epubmerge import
         files = []
-    def use_epubmerge(self, name,  files):
+    def use_epubmerge(self, name,  files, annotation):
         try:
-            doMerge(f"{name}.epub", files)
+            doMerge(
+                f"{name}.epub", 
+                files,
+                [],
+                name,
+                annotation ,
+                self.tags,
+                ['ru'],
+            True,
+            True,
+            False,
+            False,
+            False,
+            None,
+            False,
+            self.url)
+            
+            
+            
             print(f"{name}.epub created" )
             logging.info(f"Merged {name}.epub created")
             
