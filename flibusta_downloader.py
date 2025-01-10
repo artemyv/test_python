@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 
 class WebPageParser:
-    def __init__(self, url):
+    def __init__(self, TkRoot, url):
         self.url = url
         self.host = re.match(r'(https?://[^/]+)', url).group(1)
         self.page_content = None
@@ -34,6 +34,7 @@ class WebPageParser:
         self.tags = []
         self.error = False
         self.result = None
+        self.Tk = TkRoot
         
     def fetch_page(self):
         try:
@@ -145,12 +146,13 @@ class WebPageParser:
         def store_selected():
             selected_indices = listbox.curselection()
             self.selected = [entries[listbox.get(i)] for i in selected_indices]
-            root.destroy()
+            second_form.destroy()
+            self.handle_selected()
 
-        root = tk.Tk()
-        root.title("Story Links")
+        second_form = tk.Toplevel(self.Tk)
+        second_form.title("Story Links")
 
-        listbox = tk.Listbox(root, selectmode=tk.EXTENDED, width=100, height=20)
+        listbox = tk.Listbox(second_form, selectmode=tk.EXTENDED, width=100, height=20)
         listbox.pack()
         entries = {}
         for link in links:
@@ -163,16 +165,16 @@ class WebPageParser:
         # Select all entries by default
         listbox.select_set(0, tk.END)
 
-        btn_up = tk.Button(root, text="Move Up", command=move_up)
+        btn_up = tk.Button(second_form, text="Move Up", command=move_up)
         btn_up.pack(side=tk.LEFT)
 
-        btn_down = tk.Button(root, text="Move Down", command=move_down)
+        btn_down = tk.Button(second_form, text="Move Down", command=move_down)
         btn_down.pack(side=tk.LEFT)
 
-        btn_show = tk.Button(root, text="Ok", command=store_selected)
+        btn_show = tk.Button(second_form, text="Ok", command=store_selected)
         btn_show.pack(side=tk.LEFT)
 
-        root.mainloop()
+        second_form.mainloop()
         
     def handle_selected(self):
         if self.selected is None:
@@ -195,6 +197,8 @@ class WebPageParser:
                 annotation += part_annotation + '\n\n'
             
         self.use_epubmerge(folder_name, files, annotation)
+        
+        self.Tk.update_idletasks()
         
     def fetch_part(self, base_url, folder):
         try:
@@ -260,8 +264,7 @@ class WebPageParser:
             links = self.get_story_links(lastUpdatedDate)
         if not self.error:
             self.show_links_in_listbox(links)
-        if not self.error:
-            self.handle_selected()
+
 
 
 def parse_date(date_str):
@@ -288,6 +291,7 @@ def on_ok():
             root.update_idletasks()
             return
 
+    lastUpdatedDate = None
     if lastUpdated:
         lastUpdatedDate = parse_date(lastUpdated)
         if lastUpdatedDate:
@@ -304,8 +308,8 @@ def on_ok():
     last_updated_entry.config(bg="white")
     root.update_idletasks()
 
-    parser = WebPageParser(url)
-    parser. process(lastUpdatedDate)
+    parser = WebPageParser(root, url)
+    parser.process(lastUpdatedDate)
     if parser.error:
         error_label.config(text=parser.result, fg="red")
     else:
