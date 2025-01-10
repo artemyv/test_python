@@ -27,11 +27,13 @@ class WebPageParser:
         self.url = url
         self.host = re.match(r'(https?://[^/]+)', url).group(1)
         self.page_content = None
-        self.soap = None
+        self.soup = None
         self.selected = None
         self.story_name = None
         self.new_part = False
         self.tags = []
+        self.error = False
+        self.result = None
         
     def fetch_page(self):
         try:
@@ -42,12 +44,15 @@ class WebPageParser:
             logging.info(f"Downloaded {len(self.page_content)} bytes")
         except requests.RequestException as e:
             logging.error(f"Error fetching the page: {e}")
+            self.error = True
+            self.result=f"Error fetching the page: {e}"
             self.page_content = None
 
     def parse_page(self):
         if self.page_content is None:
+            self.error = True
+            self.result="No content to parse. Please provide valid url."
             logging.warning("No content to parse.")
-            print("No content to parse. Please fetch the page first.")
             return None
         self.soup = BeautifulSoup(self.page_content, 'html.parser')
         logging.debug(self.soup)
@@ -58,6 +63,8 @@ class WebPageParser:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             main_div = soup.find('div', id='main')
+            modified = None
+            annotation = None
             if main_div:
                 annotation_tag = main_div.find('h2', text='Аннотация')
                 if annotation_tag:
@@ -78,7 +85,7 @@ class WebPageParser:
                         modified = datetime.strptime(modified_date_str, '%d.%m.%Y')
                         if modified:
                             logging.info(f"Found modified date for part {index}: {modified}")
-                
+            return annotation, modified
             return annotation, modified
         
         except requests.RequestException as e:
@@ -87,12 +94,14 @@ class WebPageParser:
     def get_story_links(self, lastUpdated):
         if self.soup is None:
             logging.warning("No content has been parsed.")
-            print("No content has been parsed. Please fetch the page first and parse it.")
+            self.error = True
+            self.result="No content has been parsed. Please provide valid url."
             return None
         main_div = self.soup.find('div', id='main')
         if(main_div is None):
             logging.error("No main div found")
-            print("No main div found. Please check the URL.")
+            self.error = True
+            self.result="No main div found. Please check the URL."
             return None
         self.story_name = main_div.find('h1').get_text().strip()
         logging.info(f"Found story name {self.story_name}")
@@ -168,7 +177,8 @@ class WebPageParser:
     def handle_selected(self):
         if self.selected is None:
             logging.warning("No links have been selected.")
-            print("No links have been selected. Please select some links first.")
+            self.error = True
+            self.result="No links have been selected. Please select some links to download."
             return None
         folder_name = re.sub(r'[\\/*?:"<>|]', "", self.story_name)
         if not os.path.exists(folder_name):
@@ -215,29 +225,44 @@ class WebPageParser:
     def use_epubmerge(self, name,  files, annotation):
         try:
             doMerge(
-                f"{name}.epub", 
+                f"{name}.epub",
                 files,
                 [],
                 name,
-                annotation ,
+                annotation,
                 self.tags,
                 ['ru'],
-            True,
-            True,
-            False,
-            False,
-            False,
-            None,
-            False,
-            self.url)
+                True,
+                True,
+                False,
+                False,
+                False,
+                None,
+                False,
+                self.url
+            )
             
             
             
-            print(f"{name}.epub created" )
+            self.result=f"{name}.epub created" 
             logging.info(f"Merged {name}.epub created")
             
         except Exception as e:
-            print(f"Error importing epubmerge: {e}")
+            self.result=f"Error importing epubmerge: {e}"
+            self.error = True
+            logging.error(f"Error importing epubmerge: {e}")
+            
+    def process(self, lastUpdatedDate):
+        self.fetch_page()
+        if not self.error:
+            self.parse_page()
+        if not self.error:
+            links = self.get_story_links(lastUpdatedDate)
+        if not self.error:
+            self.show_links_in_listbox(links)
+        if not self.error:
+            self.handle_selected()
+
 
 def parse_date(date_str):
     try:
@@ -246,24 +271,68 @@ def parse_date(date_str):
         logging.error(f"Error parsing date: {e}")
         return None
 
-if len(sys.argv) < 2:
-    print("Usage: python flibusta_downloader.py <URL> [LastUpdated]")
+    
+def on_ok():
+    global url, lastUpdatedDate
+    url = url_entry.get()
+    lastUpdated = last_updated_entry.get()
+    if not url:
+        error_label.config(text="URL is required.", fg="red")
+        url_entry.config(bg="red")
+        root.update_idletasks()
+        return
+    else:
+        if not re.match(r'https?://', url):
+            error_label.config(text="Invalid URL format.", fg="red")
+            url_entry.config(bg="red")
+            root.update_idletasks()
+            return
+
+    if lastUpdated:
+        lastUpdatedDate = parse_date(lastUpdated)
+        if lastUpdatedDate:
+            logging.info(f"Parsed last updated date: {lastUpdatedDate}")
+        else:
+            logging.warning("Failed to parse last updated date.")
+            error_label.config(text="Failed to parse last updated date.", fg="red")
+            last_updated_entry.config(bg="red")
+            root.update_idletasks()
+            return
+
+    error_label.config(text="", fg="white")
+    url_entry.config(bg="white")
+    last_updated_entry.config(bg="white")
+    root.update_idletasks()
+
+    parser = WebPageParser(url)
+    parser. process(lastUpdatedDate)
+    if parser.error:
+        error_label.config(text=parser.result, fg="red")
+    else:
+        error_label.config(text=parser.result, fg="green")
+
+def on_cancel():
+    root.destroy()
     sys.exit(1)
 
-url = sys.argv[1] # https://flibusta.is/s/65539
-if len(sys.argv) > 2:
-    lastUpdated=sys.argv[2]
+root = tk.Tk()
+root.title("Flibusta Downloader")
 
-if lastUpdated:
-    lastUpdatedDate = parse_date(lastUpdated)
-    if lastUpdatedDate:
-        logging.info(f"Parsed last updated date: {lastUpdatedDate}")
-    else:
-        logging.warning("Failed to parse last updated date.")
-parser = WebPageParser(url)
-parser.fetch_page()
-parser.parse_page()
+tk.Label(root, text="URL:").grid(row=0, column=0, padx=10, pady=10)
+url_entry = tk.Entry(root, width=50)
+url_entry.grid(row=0, column=1, padx=10, pady=10)
 
-links = parser.get_story_links(lastUpdatedDate)
-parser.show_links_in_listbox(links)
-parser.handle_selected()
+tk.Label(root, text="Last Updated (optional):").grid(row=1, column=0, padx=10, pady=10)
+last_updated_entry = tk.Entry(root, width=50)
+last_updated_entry.grid(row=1, column=1, padx=10, pady=10)
+
+error_label = tk.Label(root, text="", fg="white")
+error_label.grid(row=3, columnspan=2, padx=10, pady=10)
+
+ok_button = tk.Button(root, text="OK", command=on_ok)
+ok_button.grid(row=2, column=0, padx=10, pady=10)
+
+cancel_button = tk.Button(root, text="Cancel", command=on_cancel)
+cancel_button.grid(row=2, column=1, padx=10, pady=10)
+
+root.mainloop()
