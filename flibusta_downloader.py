@@ -51,7 +51,7 @@ class WebPageParser:
         self.result = None
      
     def process(self):
-        self.update_status("Reading page", "black")
+        self.update_status(False, "Reading page", "black")
         self.fetch_page()
         if not self.error:
             self.parse_page()
@@ -60,7 +60,9 @@ class WebPageParser:
         if not self.error:
             self.show_links_in_listbox(links)
    
-    def update_status(self, message, color):
+    def update_status(self, error, message, color):
+        self.error = error
+        self.result= message
         error_label.config(text=message, fg=color)
         root.update_idletasks()
                         
@@ -73,21 +75,18 @@ class WebPageParser:
             logging.info(f"Downloaded {len(self.page_content)} bytes")
         except requests.RequestException as e:
             logging.error(f"Error fetching the page: {e}")
-            self.error = True
-            self.result=f"Error fetching the page: {e}"
             self.page_content = None
-            self.update_status(f"Error fetching the page: {e}", "red")
+            self.update_status(True, f"Error fetching the page: {e}", "red")
 
     def parse_page(self):
         if self.page_content is None:
-            self.error = True
-            self.result="No content to parse. Please provide valid url."
             logging.warning("No content to parse.")
+            self.update_status(True, "No content to parse. Please provide valid url.", "red")
             return None
+        self.update_status(False, "Parsing story page.", "black")
         self.soup = BeautifulSoup(self.page_content, 'html.parser')
         if not self.soup:
-            self.error = True
-            self.result="Failed to parse the content. Please provide valid url."
+            self.update_status(True, "Failed to parse the content. Please provide valid url.", "red")
             logging.error("Failed to parse the content.")
             return None
         logging.info("Page content has been parsed.")
@@ -95,14 +94,13 @@ class WebPageParser:
     def get_story_links(self):
         if self.soup is None:
             logging.warning("No content has been parsed.")
-            self.error = True
-            self.result="No content has been parsed. Please provide valid url."
+            self.update_status(True, "No content has been parsed. Please provide valid url.", "red")
             return None
+        self.update_status(False, "Reading story parts.", "black")
         main_div = self.soup.find('div', id='main')
         if(main_div is None):
             logging.error("No main div found")
-            self.error = True
-            self.result="No main div found. Please check the URL."
+            self.update_status(True, "No main div found. Please check the URL.", "red")
             return None
         self.story_name = main_div.find('h1').get_text().strip()
         logging.info(f"Found story name {self.story_name}")
@@ -158,6 +156,7 @@ class WebPageParser:
         
         except requests.RequestException as e:
             logging.error(f"Error fetching the part_details: {e}")
+            self.update_status(True, f"Error fetching the part_details: {e}", "red")
             return None
             
 
@@ -186,6 +185,8 @@ class WebPageParser:
             selected_indices = listbox.curselection()
             self.selected = [entries[listbox.get(i)] for i in selected_indices]
             self.handle_selected()
+
+        self.update_status(False, "Please selects parts to download...", "black")
 
         listbox_frame = tk.Frame(root)
         listbox_frame.grid(row=4, columnspan=2, padx=10, pady=10)
@@ -219,15 +220,17 @@ class WebPageParser:
         if self.selected is None:
             self.handle_no_selection()
             return None
+        
+        self.update_status(False, "Downloading story parts...", "black")
+
         folder_name = self.create_folder()
         story_details = self.process_links(folder_name)
         self.merge_story_parts(story_details)
  
     def handle_no_selection(self):
         logging.warning("No links have been selected.")
-        self.error = True
-        self.result = "No links have been selected. Please select some links to download."
-
+        self.update_status(True, "No links have been selected. Please select some links to download.", "red")
+ 
     def create_folder(self):
         folder_name = re.sub(r'[\\/*?:"<>|]', "", self.story_name)
         if not os.path.exists(folder_name):
@@ -238,10 +241,12 @@ class WebPageParser:
         annotation = ""
         files = []
         for link in self.selected:
+            self.update_status(False, f"Processing link: {link['url']} - {link['text']}", "black")
             logging.info(f"Processing link: {link['url']} - {link['text']}")
             part_file = self.fetch_part(link['url'], folder_name)
             if not part_file:
                 logging.warning(f"Failed to fetch part: {link['url']}")
+                self.update_status(True, f"Failed to fetch part: {link['url']}", "red")
                 #todo: break further processing?
                 continue
             files.append(part_file)
@@ -289,6 +294,7 @@ class WebPageParser:
                     file.write(chunk)
     
     def merge_story_parts(self, story_details):   
+        self.update_status(False, f"Merging story {story_details['name']}", "black")
         try:
             doMerge(
                 f"{story_details['name']}.epub",
@@ -307,13 +313,12 @@ class WebPageParser:
                 False,
                 self.url
             )
-            self.result = f"{story_details['name']}.epub created" 
             logging.info(f"Merged {story_details['name']}.epub created")
+            self.update_status(False, f"{story_details['name']}.epub created" , "green")
             
         except Exception as e:
             logging.error(f"Error merging epub: {e}")         
-            self.result = f"Error merging epub: {e}"
-            self.error = True
+            self.update_status(True, f"Error merging epub: {e}" , "red")
             
             
             
